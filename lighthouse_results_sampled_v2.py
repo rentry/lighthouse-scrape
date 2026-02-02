@@ -11,7 +11,6 @@ from collections import defaultdict
 BASE_URL = "https://bouldercounty.gov/"
 INPUT_CSV = "boulder.csv"
 OUTPUT_CSV = "lighthouse_results.csv"
-SAMPLE_SIZE = 1730
 
 SKIP_EXTENSIONS = {
     ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
@@ -44,7 +43,7 @@ def load_urls_from_csv(csv_path):
     urls = set()
     with open(csv_path, newline="", encoding="utf-8") as f:
         for row in f:
-            raw = row.strip()
+            raw = row.strip().rstrip(",")
             if not raw:
                 continue
             cleaned = normalize_url(raw)
@@ -54,31 +53,30 @@ def load_urls_from_csv(csv_path):
     return list(urls)
 
 # ---------------------------------------------------------
-# URL VALIDATION (ONLY FOR SAMPLED URLS)
+# URL VALIDATION (IMPROVED)
 # ---------------------------------------------------------
 
-def check_url_status(url, timeout=8):
+def check_url_status(url, timeout=12):
     try:
-        resp = requests.head(url, allow_redirects=True, timeout=timeout)
-        if resp.status_code >= 400 or resp.status_code == 405:
-            resp = requests.get(url, allow_redirects=True, timeout=timeout)
+        resp = requests.get(url, allow_redirects=True, timeout=timeout)
         final_url = resp.url
         status = resp.status_code
-        is_redirect = (final_url != url)
-        is_404 = (status == 404)
-        return final_url, status, is_redirect, is_404
+        is_valid = (200 <= status < 400)
+        return final_url, status, is_valid
     except Exception:
-        return url, None, False, True
+        return url, None, False
 
 def validate_sample(sampled_urls):
     valid = []
     invalid = []
+
     for url in sampled_urls:
-        final_url, status, is_redirect, is_404 = check_url_status(url)
-        if is_404 or is_redirect:
-            invalid.append(url)
-        else:
+        final_url, status, is_valid = check_url_status(url)
+        if is_valid:
             valid.append(final_url)
+        else:
+            invalid.append(url)
+
     return valid, invalid
 
 # ---------------------------------------------------------
@@ -153,8 +151,8 @@ def replace_invalid_urls(valid, invalid, groups, total_needed=1000):
     for url in replacement_pool:
         if len(valid) >= total_needed:
             break
-        final_url, status, is_redirect, is_404 = check_url_status(url)
-        if not is_404 and not is_redirect:
+        final_url, status, is_valid = check_url_status(url)
+        if is_valid:
             valid.append(final_url)
 
     return valid[:total_needed]
@@ -198,23 +196,31 @@ def extract_scores(lighthouse_json):
 def main():
     print("Loading URLs from CSV...")
     all_urls = load_urls_from_csv(INPUT_CSV)
-    print(f"Loaded {len(all_urls)} raw URLs")
+    total_count = len(all_urls)
+    print(f"Loaded {total_count} raw URLs")
+
+    if total_count > 5000:
+        effective_sample_size = 1000
+        print("Source CSV > 5000 rows → using sample size = 1000")
+    else:
+        effective_sample_size = total_count
+        print("Source CSV ≤ 5000 rows → evaluating all rows")
 
     print("Grouping by IA category...")
     groups = group_by_category(all_urls)
     print(f"Detected {len(groups)} IA categories")
 
     print("Performing depth-aware stratified sampling...")
-    sampled = stratified_depth_weighted_sample(groups, SAMPLE_SIZE)
+    sampled = stratified_depth_weighted_sample(groups, effective_sample_size)
     print(f"Initial sample size: {len(sampled)}")
 
     print("Validating sampled URLs...")
     valid, invalid = validate_sample(sampled)
     print(f"Valid: {len(valid)}, Invalid: {len(invalid)}")
 
-    if len(valid) < SAMPLE_SIZE:
+    if len(valid) < effective_sample_size:
         print("Replacing invalid URLs...")
-        valid = replace_invalid_urls(valid, invalid, groups, SAMPLE_SIZE)
+        valid = replace_invalid_urls(valid, invalid, groups, effective_sample_size)
         print(f"Final valid sample size: {len(valid)}")
 
     print("Running Lighthouse audits...")

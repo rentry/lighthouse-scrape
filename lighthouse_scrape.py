@@ -7,7 +7,7 @@ import time
 import os
 import xml.etree.ElementTree as ET
 
-BASE_URL = "https://www.bemidjistate.edu/"
+BASE_URL = "https://bouldercounty.gov/"
 SITEMAP_URL = urljoin(BASE_URL, "sitemap.xml")
 OUTPUT_CSV = "lighthouse_results.csv"
 VISITED = set()
