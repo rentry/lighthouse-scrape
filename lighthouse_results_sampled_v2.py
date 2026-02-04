@@ -7,6 +7,7 @@ import os
 import random
 import math
 from collections import defaultdict
+import json
 
 BASE_URL = "https://bouldercounty.gov/"
 INPUT_CSV = "boulder.csv"
@@ -53,7 +54,7 @@ def load_urls_from_csv(csv_path):
     return list(urls)
 
 # ---------------------------------------------------------
-# URL VALIDATION (IMPROVED)
+# URL VALIDATION
 # ---------------------------------------------------------
 
 def check_url_status(url, timeout=12):
@@ -132,7 +133,7 @@ def stratified_depth_weighted_sample(groups, total_sample_size=1000):
     return sample
 
 # ---------------------------------------------------------
-# REPLACE INVALID URLS WITH ALTERNATES
+# REPLACE INVALID URLS
 # ---------------------------------------------------------
 
 def replace_invalid_urls(valid, invalid, groups, total_needed=1000):
@@ -166,16 +167,25 @@ def run_lighthouse(url):
         result = subprocess.run([
             "lighthouse", url,
             "--quiet",
-            "--chrome-flags='--headless'",
+            "--chrome-flags=--headless,--disable-storage-reset",
             "--output=json",
-            "--output-path=stdout"
-        ], capture_output=True, text=True, timeout=120)
+            "--output-path=stdout",
+            "--preset=desktop",
+            "--throttling-method=simulate"
+        ], capture_output=True, text=True, timeout=180)
+
+        if result.stderr:
+            print("\n===== LIGHTHOUSE STDERR =====")
+            print(result.stderr[:500])
+            print("===== END STDERR =====\n")
+
         return result.stdout
-    except Exception:
+
+    except Exception as e:
+        print(f"Error running Lighthouse for {url}: {e}")
         return None
 
 def extract_scores(lighthouse_json):
-    import json
     try:
         data = json.loads(lighthouse_json)
         categories = data.get("categories", {})
@@ -232,9 +242,18 @@ def main():
         for url in valid:
             print(f"Auditing: {url}")
             lh_json = run_lighthouse(url)
-            if lh_json:
-                scores = extract_scores(lh_json)
-                writer.writerow(scores)
+
+            if not lh_json:
+                print(f"⚠️ No Lighthouse output for {url}")
+                continue
+
+            scores = extract_scores(lh_json)
+
+            if not scores or not scores.get("url"):
+                print(f"⚠️ Lighthouse returned no usable data for {url}")
+                continue
+
+            writer.writerow(scores)
             time.sleep(5)
 
 if __name__ == "__main__":
